@@ -20,54 +20,211 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Prepare historical release assets
+      - name: Install PAK builder dependency
+        run: python -m pip install --disable-pip-version-check lz4
+
+      - name: Restore source snapshots
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist
+          mkdir -p work dist
 
-          cp .release-assets/v1/Shrink_EldritchBlast6_Patch8.pak dist/
+          for v in 1 2 3 4 5; do
+            mkdir -p "work/v${v}"
+          done
+          unzip -q versions/v1/Shrink_EldritchBlast6_Patch8_Source.zip -d work/v1
+          unzip -q versions/v2/Shrink_EldritchBlast6_Patch8_v2_Source.zip -d work/v2
+          unzip -q versions/v3/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip -d work/v3
+          unzip -q versions/v4/Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip -d work/v4
+          unzip -q versions/v5/Shrink_EldritchSorcerer_Patch8_v5_Source.zip -d work/v5
+
+          for v in 6 7 8; do
+            cat versions/v${v}/Manaweaver_v${v}_source.tar.xz.part-* > "dist/Manaweaver_v${v}_source.tar.xz"
+            mkdir -p "work/v${v}"
+            tar -xJf "dist/Manaweaver_v${v}_source.tar.xz" -C "work/v${v}"
+          done
+
           cp versions/v1/Shrink_EldritchBlast6_Patch8_Source.zip dist/
-
-          cp .release-assets/v2/Shrink_EldritchBlast6_Patch8_v2.pak dist/
           cp versions/v2/Shrink_EldritchBlast6_Patch8_v2_Source.zip dist/
-
-          cp .release-assets/v3/Shrink_EldritchBlastProgressive_Patch8_v3.pak dist/
           cp versions/v3/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip dist/
-
-          xz -dc .release-assets/v4/Shrink_EldritchBlastSpecialization_Patch8_v4.pak.xz > dist/Shrink_EldritchBlastSpecialization_Patch8_v4.pak
           cp versions/v4/Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip dist/
-
-          xz -dc .release-assets/v5/Shrink_EldritchSorcerer_Patch8_v5.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v5.pak
           cp versions/v5/Shrink_EldritchSorcerer_Patch8_v5_Source.zip dist/
 
-          xz -dc .release-assets/v6/Shrink_EldritchSorcerer_Patch8_v6.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v6.pak
-          cat versions/v6/Manaweaver_v6_source.tar.xz.part-* > dist/Manaweaver_v6_source.tar.xz
+      - name: Rebuild exact v1-v8 PAK files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/build_historical_paks.py <<'PY'
+          import os
+          import struct
+          import xml.etree.ElementTree as ET
+          import lz4.block
 
-          xz -dc .release-assets/v7/Shrink_EldritchSorcerer_Patch8_v7.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v7.pak
-          cat versions/v7/Manaweaver_v7_source.tar.xz.part-* > dist/Manaweaver_v7_source.tar.xz
+          SIGNATURE = 0x41434F4C  # LOCA
 
-          xz -dc .release-assets/v8/Shrink_EldritchSorcerer_Patch8_v8.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v8.pak
-          cat versions/v8/Manaweaver_v8_source.tar.xz.part-* > dist/Manaweaver_v8_source.tar.xz
+          def write_loca(xml_path: str, out_path: str, wrong_v7_offset: bool = False) -> None:
+              root = ET.parse(xml_path).getroot()
+              entries = []
+              for node in root.findall('content'):
+                  key = node.attrib['contentuid']
+                  version = int(node.attrib.get('version', '1'))
+                  text = node.text or ''
+                  entries.append((key, version, text))
 
-          test -s dist/Shrink_EldritchBlast6_Patch8.pak
-          test -s dist/Shrink_EldritchBlast6_Patch8_Source.zip
-          test -s dist/Shrink_EldritchBlast6_Patch8_v2.pak
-          test -s dist/Shrink_EldritchBlast6_Patch8_v2_Source.zip
-          test -s dist/Shrink_EldritchBlastProgressive_Patch8_v3.pak
-          test -s dist/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip
-          test -s dist/Shrink_EldritchBlastSpecialization_Patch8_v4.pak
-          test -s dist/Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip
-          test -s dist/Shrink_EldritchSorcerer_Patch8_v5.pak
-          test -s dist/Shrink_EldritchSorcerer_Patch8_v5_Source.zip
-          test -s dist/Shrink_EldritchSorcerer_Patch8_v6.pak
-          test -s dist/Manaweaver_v6_source.tar.xz
-          test -s dist/Shrink_EldritchSorcerer_Patch8_v7.pak
-          test -s dist/Manaweaver_v7_source.tar.xz
-          test -s dist/Shrink_EldritchSorcerer_Patch8_v8.pak
-          test -s dist/Manaweaver_v8_source.tar.xz
+              # v7 historically wrote only this header value with a wrong 74-byte stride.
+              # The physical entry records still used the correct 70-byte structure.
+              stride_for_header = 74 if wrong_v7_offset else 70
+              text_offset = 12 + stride_for_header * len(entries)
 
-          echo 'Prepared assets:'
+              out = bytearray(struct.pack('<III', SIGNATURE, len(entries), text_offset))
+              for key, version, text in entries:
+                  key_bytes = key.encode('utf-8')
+                  if len(key_bytes) >= 64:
+                      raise ValueError(f'LOCA key too long: {key}')
+                  out += key_bytes + b'\0' * (64 - len(key_bytes))
+                  out += struct.pack('<HI', version, len(text.encode('utf-8')) + 1)
+
+              for _, _, text in entries:
+                  out += text.encode('utf-8') + b'\0'
+
+              os.makedirs(os.path.dirname(out_path), exist_ok=True)
+              with open(out_path, 'wb') as f:
+                  f.write(out)
+
+          def restore_generated_loca(root: str, version: int) -> None:
+              for base, _, names in os.walk(root):
+                  for name in names:
+                      if not name.endswith('.loca.xml'):
+                          continue
+                      xml_path = os.path.join(base, name)
+                      loca_path = xml_path[:-4]  # remove .xml
+                      write_loca(xml_path, loca_path, wrong_v7_offset=(version == 7))
+
+          def package_files(root: str):
+              paths = []
+              for base, dirs, names in os.walk(root):
+                  dirs.sort()
+                  names.sort()
+                  for name in names:
+                      rel = os.path.relpath(os.path.join(base, name), root).replace(os.sep, '/')
+                      if rel == 'README.md' or rel.endswith('.loca.xml'):
+                          continue
+                      paths.append(rel)
+              return sorted(paths)
+
+          def build_pak(root: str, output: str) -> None:
+              paths = package_files(root)
+              data = bytearray(b'LSPK' + b'\0' * 36)
+              entries = []
+
+              for rel in paths:
+                  with open(os.path.join(root, *rel.split('/')), 'rb') as f:
+                      payload = f.read()
+                  offset = len(data)
+                  data += payload
+
+                  name = rel.encode('utf-8')
+                  if len(name) >= 256:
+                      raise ValueError(f'PAK path too long: {rel}')
+                  name_field = name + b'\0' * (256 - len(name))
+
+                  # LSPK v18 FileEntry18; all historical project files were stored uncompressed.
+                  entries.append(
+                      name_field
+                      + struct.pack(
+                          '<I H B B I I',
+                          offset & 0xFFFFFFFF,
+                          (offset >> 32) & 0xFFFF,
+                          0,  # archive part
+                          0,  # compression flags: none
+                          len(payload),
+                          0,  # uncompressed size is zero for uncompressed entries
+                      )
+                  )
+
+              raw_file_list = b''.join(entries)
+              compressed_file_list = lz4.block.compress(raw_file_list, store_size=False)
+              file_list_offset = len(data)
+              file_list = struct.pack('<II', len(entries), len(compressed_file_list)) + compressed_file_list
+              data += file_list
+
+              # LSPKHeader16 used by package version 18.
+              header = struct.pack(
+                  '<I Q I B B 16s H',
+                  18,
+                  file_list_offset,
+                  len(file_list),
+                  0,  # flags
+                  0,  # priority
+                  b'\0' * 16,
+                  1,  # number of parts
+              )
+              data[4:40] = header
+
+              with open(output, 'wb') as f:
+                  f.write(data)
+
+          roots = {
+              1: 'work/v1/Shrink_EldritchBlast6_Patch8',
+              2: 'work/v2',
+              3: 'work/v3',
+              4: 'work/v4',
+              5: 'work/v5',
+              6: 'work/v6',
+              7: 'work/v7',
+              8: 'work/v8',
+          }
+
+          outputs = {
+              1: 'dist/Shrink_EldritchBlast6_Patch8.pak',
+              2: 'dist/Shrink_EldritchBlast6_Patch8_v2.pak',
+              3: 'dist/Shrink_EldritchBlastProgressive_Patch8_v3.pak',
+              4: 'dist/Shrink_EldritchBlastSpecialization_Patch8_v4.pak',
+              5: 'dist/Shrink_EldritchSorcerer_Patch8_v5.pak',
+              6: 'dist/Shrink_EldritchSorcerer_Patch8_v6.pak',
+              7: 'dist/Shrink_EldritchSorcerer_Patch8_v7.pak',
+              8: 'dist/Shrink_EldritchSorcerer_Patch8_v8.pak',
+          }
+
+          for version in (6, 7, 8):
+              restore_generated_loca(roots[version], version)
+
+          for version in range(1, 9):
+              build_pak(roots[version], outputs[version])
+              print(f'built v{version}: {outputs[version]}')
+          PY
+          python /tmp/build_historical_paks.py
+
+      - name: Verify historical PAK hashes and source archives
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat > /tmp/expected.sha256 <<'EOF'
+          d5d17a191e3fe4ffd4913e09797b5623d1f45023dc3d988725ce834f328b198b  dist/Shrink_EldritchBlast6_Patch8.pak
+          f027ac66ac0804c1012d13c1d6125f3b7b82257463f479915cca9b15cfc6e43c  dist/Shrink_EldritchBlast6_Patch8_v2.pak
+          0ecaf9b86a213c5867f658e7d23c57b957d0ed463a7f6f99aa63065b4c8be747  dist/Shrink_EldritchBlastProgressive_Patch8_v3.pak
+          ce27253eec824f32e6201866147fc94efdb557803ec39241fc0ad75e9bef0ac5  dist/Shrink_EldritchBlastSpecialization_Patch8_v4.pak
+          58cf1ca6f869edbdafec42d89d92a683fd3a60a3f06b704f01d09f46024b33db  dist/Shrink_EldritchSorcerer_Patch8_v5.pak
+          2205c14898afa9074d9ee23ef6d8f33240f3fe2bb96279418c05d8aa759db4ca  dist/Shrink_EldritchSorcerer_Patch8_v6.pak
+          b605cfce5e69c7b887587878885c265551ff9fb476f881d20d5e1e5759e7ab24  dist/Shrink_EldritchSorcerer_Patch8_v7.pak
+          601e659b22545dce267a30fb8792a99acde097da9f9b15c06a1cf6a74cf110c8  dist/Shrink_EldritchSorcerer_Patch8_v8.pak
+          EOF
+          sha256sum -c /tmp/expected.sha256
+
+          for file in \
+            dist/Shrink_EldritchBlast6_Patch8_Source.zip \
+            dist/Shrink_EldritchBlast6_Patch8_v2_Source.zip \
+            dist/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip \
+            dist/Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip \
+            dist/Shrink_EldritchSorcerer_Patch8_v5_Source.zip \
+            dist/Manaweaver_v6_source.tar.xz \
+            dist/Manaweaver_v7_source.tar.xz \
+            dist/Manaweaver_v8_source.tar.xz; do
+            test -s "$file"
+          done
+
+          echo 'Verified release assets:'
           sha256sum dist/* | sort
 
       - name: Create or update v1-v8 releases
