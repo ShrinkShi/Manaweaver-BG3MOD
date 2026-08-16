@@ -1,0 +1,155 @@
+name: Publish verified v1-v8 releases
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-releases-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          # v1-v3: exact historical PAKs already stored directly in the repository.
+          cp .release-assets/v1/Shrink_EldritchBlast6_Patch8.pak dist/
+          cp .release-assets/v2/Shrink_EldritchBlast6_Patch8_v2.pak dist/
+          cp .release-assets/v3/Shrink_EldritchBlastProgressive_Patch8_v3.pak dist/
+
+          # v4-v6: exact xz archives stored as Git blobs. Decode them through the Git Data API.
+          fetch_blob() {
+            local sha="$1"
+            local out="$2"
+            gh api "repos/${GITHUB_REPOSITORY}/git/blobs/${sha}" --jq .content \
+              | tr -d '\n' | base64 -d > "$out"
+          }
+          fetch_blob 7dbedca912a902634b288e6ef757b4e0d712f177 /tmp/v4.pak.xz
+          fetch_blob 0a9246b10ba716ef57bc46e7357c9cd92a922d50 /tmp/v5.pak.xz
+          fetch_blob bbf06275d538a43d3cbb528497dde0895e2a2443 /tmp/v6.pak.xz
+          xz -dc /tmp/v4.pak.xz > dist/Shrink_EldritchBlastSpecialization_Patch8_v4.pak
+          xz -dc /tmp/v5.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v5.pak
+          xz -dc /tmp/v6.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v6.pak
+
+          # v7-v8: historical xz archives already staged in the repository.
+          xz -dc .release-assets/v7/Shrink_EldritchSorcerer_Patch8_v7.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v7.pak
+          xz -dc .release-assets/v8/Shrink_EldritchSorcerer_Patch8_v8.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v8.pak
+
+          # Source archives.
+          cp versions/v1/Shrink_EldritchBlast6_Patch8_Source.zip dist/
+          cp versions/v2/Shrink_EldritchBlast6_Patch8_v2_Source.zip dist/
+          cp versions/v3/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip dist/
+
+          cat .release-assets/source/v4/source.part-* > dist/Manaweaver_v4_source.tar.xz
+          cat .release-assets/source/v5/source.part-* > dist/Manaweaver_v5_source.tar.xz
+          for v in 6 7 8; do
+            cat versions/v${v}/Manaweaver_v${v}_source.tar.xz.part-* > "dist/Manaweaver_v${v}_source.tar.xz"
+          done
+
+          for v in 4 5 6 7 8; do
+            xz -t "dist/Manaweaver_v${v}_source.tar.xz"
+          done
+
+      - name: Verify exact historical PAK hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/expected.sha256 <<'EOF'
+          d5d17a191e3fe4ffd4913e09797b5623d1f45023dc3d988725ce834f328b198b  dist/Shrink_EldritchBlast6_Patch8.pak
+          f027ac66ac0804c1012d13c1d6125f3b7b82257463f479915cca9b15cfc6e43c  dist/Shrink_EldritchBlast6_Patch8_v2.pak
+          0ecaf9b86a213c5867f658e7d23c57b957d0ed463a7f6f99aa63065b4c8be747  dist/Shrink_EldritchBlastProgressive_Patch8_v3.pak
+          ce27253eec824f32e6201866147fc94efdb557803ec39241fc0ad75e9bef0ac5  dist/Shrink_EldritchBlastSpecialization_Patch8_v4.pak
+          58cf1ca6f869edbdafec42d89d92a683fd3a60a3f06b704f01d09f46024b33db  dist/Shrink_EldritchSorcerer_Patch8_v5.pak
+          2205c14898afa9074d9ee23ef6d8f33240f3fe2bb96279418c05d8aa759db4ca  dist/Shrink_EldritchSorcerer_Patch8_v6.pak
+          b605cfce5e69c7b887587878885c265551ff9fb476f881d20d5e1e5759e7ab24  dist/Shrink_EldritchSorcerer_Patch8_v7.pak
+          601e659b22545dce267a30fb8792a99acde097da9f9b15c06a1cf6a74cf110c8  dist/Shrink_EldritchSorcerer_Patch8_v8.pak
+          EOF
+          sha256sum -c /tmp/expected.sha256
+          echo 'All historical PAK hashes match.'
+
+      - name: Publish releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          publish_release() {
+            local tag="$1"
+            local target="$2"
+            local title="$3"
+            local pak="$4"
+            local source="$5"
+            local notes=".release-assets/notes/${tag}.md"
+
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release upload "$tag" "dist/$pak" "dist/$source" --clobber
+              gh release edit "$tag" --title "$title" --notes-file "$notes"
+            else
+              gh release create "$tag" "dist/$pak" "dist/$source" \
+                --target "$target" --title "$title" --notes-file "$notes"
+            fi
+          }
+
+          publish_release v1 06f8c35f14371025d9811b66499ed9b831b41e45 \
+            'v1 — Eldritch Blast Prototype / 魔能爆原型' \
+            Shrink_EldritchBlast6_Patch8.pak \
+            Shrink_EldritchBlast6_Patch8_Source.zip
+
+          publish_release v2 0f4726cb80e3fb78094444916bfd0657b13d8121 \
+            'v2 — Runtime Six-Beam Blast / 运行时六束魔爆' \
+            Shrink_EldritchBlast6_Patch8_v2.pak \
+            Shrink_EldritchBlast6_Patch8_v2_Source.zip
+
+          publish_release v3 cc6455b24be9510affb6a21b5ecca5b24e798332 \
+            'v3 — Progressive Eldritch Blast / 渐进魔能爆' \
+            Shrink_EldritchBlastProgressive_Patch8_v3.pak \
+            Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip
+
+          publish_release v4 d1e60fa3ba475ba79a29a231b5e0d23de45bc83d \
+            'v4 — Eldritch Blast Specialization / 魔爆专精' \
+            Shrink_EldritchBlastSpecialization_Patch8_v4.pak \
+            Manaweaver_v4_source.tar.xz
+
+          publish_release v5 66ee453de6628500531eb1ab77627822ffb79483 \
+            'v5 — Manaweaver Subclass / 魔能术士子职业' \
+            Shrink_EldritchSorcerer_Patch8_v5.pak \
+            Manaweaver_v5_source.tar.xz
+
+          publish_release v6 9b4960daac3920e3dee6f3c886f6d863537b658b \
+            'v6 — Manaweaver Progression Rework / 魔能术士成长重构' \
+            Shrink_EldritchSorcerer_Patch8_v6.pak \
+            Manaweaver_v6_source.tar.xz
+
+          publish_release v7 2cdafee5d76b5fb44f34f604cdf268a81b4b1191 \
+            'v7 — Custom Spellbook Expansion / 专属法表扩展' \
+            Shrink_EldritchSorcerer_Patch8_v7.pak \
+            Manaweaver_v7_source.tar.xz
+
+          publish_release v8 3b0de858a8351aeee3020654e0200471fdd67b01 \
+            'v8 — Manaweaver Patch 8 / 魔能术士 Patch 8' \
+            Shrink_EldritchSorcerer_Patch8_v8.pak \
+            Manaweaver_v8_source.tar.xz
+
+          V7_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v7" --jq .id)
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${V7_ID}" -F prerelease=true >/dev/null
+
+          V8_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v8" --jq .id)
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${V8_ID}" -f make_latest=true >/dev/null
+
+          gh release list --limit 20
