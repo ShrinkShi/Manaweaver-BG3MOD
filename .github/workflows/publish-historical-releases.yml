@@ -29,26 +29,31 @@ jobs:
           set -euo pipefail
           mkdir -p work dist
 
-          for v in 1 2 3 4 5; do
+          for v in 1 2 3; do
             mkdir -p "work/v${v}"
           done
           unzip -q versions/v1/Shrink_EldritchBlast6_Patch8_Source.zip -d work/v1
           unzip -q versions/v2/Shrink_EldritchBlast6_Patch8_v2_Source.zip -d work/v2
           unzip -q versions/v3/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip -d work/v3
-          unzip -q versions/v4/Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip -d work/v4
-          unzip -q versions/v5/Shrink_EldritchSorcerer_Patch8_v5_Source.zip -d work/v5
+          cp versions/v1/Shrink_EldritchBlast6_Patch8_Source.zip dist/
+          cp versions/v2/Shrink_EldritchBlast6_Patch8_v2_Source.zip dist/
+          cp versions/v3/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip dist/
 
-          for v in 6 7 8; do
-            cat versions/v${v}/Manaweaver_v${v}_source.tar.xz.part-* > "dist/Manaweaver_v${v}_source.tar.xz"
+          for v in 4 5; do
+            cat .release-assets/source/v${v}/source.part-* > "dist/Manaweaver_v${v}_source.tar.xz"
+            xz -t "dist/Manaweaver_v${v}_source.tar.xz"
             mkdir -p "work/v${v}"
             tar -xJf "dist/Manaweaver_v${v}_source.tar.xz" -C "work/v${v}"
           done
 
-          cp versions/v1/Shrink_EldritchBlast6_Patch8_Source.zip dist/
-          cp versions/v2/Shrink_EldritchBlast6_Patch8_v2_Source.zip dist/
-          cp versions/v3/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip dist/
-          cp versions/v4/Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip dist/
-          cp versions/v5/Shrink_EldritchSorcerer_Patch8_v5_Source.zip dist/
+          for v in 6 7 8; do
+            cat versions/v${v}/Manaweaver_v${v}_source.tar.xz.part-* > "dist/Manaweaver_v${v}_source.tar.xz"
+            xz -t "dist/Manaweaver_v${v}_source.tar.xz"
+            mkdir -p "work/v${v}"
+            tar -xJf "dist/Manaweaver_v${v}_source.tar.xz" -C "work/v${v}"
+          done
+
+          echo 'Source archives restored successfully.'
 
       - name: Rebuild exact v1-v8 PAK files
         shell: bash
@@ -128,17 +133,16 @@ jobs:
                       raise ValueError(f'PAK path too long: {rel}')
                   name_field = name + b'\0' * (256 - len(name))
 
-                  # LSPK v18 FileEntry18; all historical project files were stored uncompressed.
                   entries.append(
                       name_field
                       + struct.pack(
                           '<I H B B I I',
                           offset & 0xFFFFFFFF,
                           (offset >> 32) & 0xFFFF,
-                          0,  # archive part
-                          0,  # compression flags: none
+                          0,
+                          0,
                           len(payload),
-                          0,  # uncompressed size is zero for uncompressed entries
+                          0,
                       )
                   )
 
@@ -148,16 +152,15 @@ jobs:
               file_list = struct.pack('<II', len(entries), len(compressed_file_list)) + compressed_file_list
               data += file_list
 
-              # LSPKHeader16 used by package version 18.
               header = struct.pack(
                   '<I Q I B B 16s H',
                   18,
                   file_list_offset,
                   len(file_list),
-                  0,  # flags
-                  0,  # priority
+                  0,
+                  0,
                   b'\0' * 16,
-                  1,  # number of parts
+                  1,
               )
               data[4:40] = header
 
@@ -200,7 +203,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          cat > /tmp/expected.sha256 <<'EOF'
+          cat > /tmp/expected-paks.sha256 <<'EOF'
           d5d17a191e3fe4ffd4913e09797b5623d1f45023dc3d988725ce834f328b198b  dist/Shrink_EldritchBlast6_Patch8.pak
           f027ac66ac0804c1012d13c1d6125f3b7b82257463f479915cca9b15cfc6e43c  dist/Shrink_EldritchBlast6_Patch8_v2.pak
           0ecaf9b86a213c5867f658e7d23c57b957d0ed463a7f6f99aa63065b4c8be747  dist/Shrink_EldritchBlastProgressive_Patch8_v3.pak
@@ -210,14 +213,17 @@ jobs:
           b605cfce5e69c7b887587878885c265551ff9fb476f881d20d5e1e5759e7ab24  dist/Shrink_EldritchSorcerer_Patch8_v7.pak
           601e659b22545dce267a30fb8792a99acde097da9f9b15c06a1cf6a74cf110c8  dist/Shrink_EldritchSorcerer_Patch8_v8.pak
           EOF
-          sha256sum -c /tmp/expected.sha256
+          sha256sum -c /tmp/expected-paks.sha256
+
+          echo '5639856a092425068527474e509739f11a5d0a1df187804507ea81afb5fcb5c9  dist/Manaweaver_v4_source.tar.xz' | sha256sum -c -
+          echo '44f11f11c7999b83077c36b48ebed31af3aefbf750496ce1d1b2ee739e0691fd  dist/Manaweaver_v5_source.tar.xz' | sha256sum -c -
 
           for file in \
             dist/Shrink_EldritchBlast6_Patch8_Source.zip \
             dist/Shrink_EldritchBlast6_Patch8_v2_Source.zip \
             dist/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip \
-            dist/Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip \
-            dist/Shrink_EldritchSorcerer_Patch8_v5_Source.zip \
+            dist/Manaweaver_v4_source.tar.xz \
+            dist/Manaweaver_v5_source.tar.xz \
             dist/Manaweaver_v6_source.tar.xz \
             dist/Manaweaver_v7_source.tar.xz \
             dist/Manaweaver_v8_source.tar.xz; do
@@ -253,64 +259,53 @@ jobs:
             fi
           }
 
-          publish_release \
-            v1 \
-            06f8c35f14371025d9811b66499ed9b831b41e45 \
+          publish_release v1 06f8c35f14371025d9811b66499ed9b831b41e45 \
             'v1 — Eldritch Blast Prototype / 魔能爆原型' \
             Shrink_EldritchBlast6_Patch8.pak \
             Shrink_EldritchBlast6_Patch8_Source.zip
 
-          publish_release \
-            v2 \
-            0f4726cb80e3fb78094444916bfd0657b13d8121 \
+          publish_release v2 0f4726cb80e3fb78094444916bfd0657b13d8121 \
             'v2 — Runtime Six-Beam Blast / 运行时六束魔爆' \
             Shrink_EldritchBlast6_Patch8_v2.pak \
             Shrink_EldritchBlast6_Patch8_v2_Source.zip
 
-          publish_release \
-            v3 \
-            cc6455b24be9510affb6a21b5ecca5b24e798332 \
+          publish_release v3 cc6455b24be9510affb6a21b5ecca5b24e798332 \
             'v3 — Progressive Eldritch Blast / 渐进魔能爆' \
             Shrink_EldritchBlastProgressive_Patch8_v3.pak \
             Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip
 
-          publish_release \
-            v4 \
-            d1e60fa3ba475ba79a29a231b5e0d23de45bc83d \
+          publish_release v4 d1e60fa3ba475ba79a29a231b5e0d23de45bc83d \
             'v4 — Eldritch Blast Specialization / 魔爆专精' \
             Shrink_EldritchBlastSpecialization_Patch8_v4.pak \
-            Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip
+            Manaweaver_v4_source.tar.xz
 
-          publish_release \
-            v5 \
-            66ee453de6628500531eb1ab77627822ffb79483 \
+          publish_release v5 66ee453de6628500531eb1ab77627822ffb79483 \
             'v5 — Manaweaver Subclass / 魔能术士子职业' \
             Shrink_EldritchSorcerer_Patch8_v5.pak \
-            Shrink_EldritchSorcerer_Patch8_v5_Source.zip
+            Manaweaver_v5_source.tar.xz
 
-          publish_release \
-            v6 \
-            9b4960daac3920e3dee6f3c886f6d863537b658b \
+          publish_release v6 9b4960daac3920e3dee6f3c886f6d863537b658b \
             'v6 — Manaweaver Progression Rework / 魔能术士成长重构' \
             Shrink_EldritchSorcerer_Patch8_v6.pak \
             Manaweaver_v6_source.tar.xz
 
-          publish_release \
-            v7 \
-            2cdafee5d76b5fb44f34f604cdf268a81b4b1191 \
+          publish_release v7 2cdafee5d76b5fb44f34f604cdf268a81b4b1191 \
             'v7 — Custom Spellbook Expansion / 专属法表扩展' \
             Shrink_EldritchSorcerer_Patch8_v7.pak \
             Manaweaver_v7_source.tar.xz
 
-          publish_release \
-            v8 \
-            3b0de858a8351aeee3020654e0200471fdd67b01 \
+          publish_release v8 3b0de858a8351aeee3020654e0200471fdd67b01 \
             'v8 — Manaweaver Patch 8 / 魔能术士 Patch 8' \
             Shrink_EldritchSorcerer_Patch8_v8.pak \
             Manaweaver_v8_source.tar.xz
 
-          gh release edit v7 --prerelease
-          gh release edit v8 --latest
+          # v7 is preserved as a known-broken historical prerelease.
+          V7_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v7" --jq .id)
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${V7_ID}" -F prerelease=true >/dev/null
+
+          # Explicitly mark v8 as the latest release.
+          V8_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v8" --jq .id)
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${V8_ID}" -F make_latest=true >/dev/null
 
           echo 'Published releases:'
           gh release list --limit 20
