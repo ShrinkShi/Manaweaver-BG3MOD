@@ -1,0 +1,159 @@
+name: Publish historical releases
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/publish-historical-releases.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare historical release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          cp .release-assets/v1/Shrink_EldritchBlast6_Patch8.pak dist/
+          cp versions/v1/Shrink_EldritchBlast6_Patch8_Source.zip dist/
+
+          cp .release-assets/v2/Shrink_EldritchBlast6_Patch8_v2.pak dist/
+          cp versions/v2/Shrink_EldritchBlast6_Patch8_v2_Source.zip dist/
+
+          cp .release-assets/v3/Shrink_EldritchBlastProgressive_Patch8_v3.pak dist/
+          cp versions/v3/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip dist/
+
+          xz -dc .release-assets/v4/Shrink_EldritchBlastSpecialization_Patch8_v4.pak.xz > dist/Shrink_EldritchBlastSpecialization_Patch8_v4.pak
+          cp versions/v4/Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip dist/
+
+          xz -dc .release-assets/v5/Shrink_EldritchSorcerer_Patch8_v5.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v5.pak
+          cp versions/v5/Shrink_EldritchSorcerer_Patch8_v5_Source.zip dist/
+
+          xz -dc .release-assets/v6/Shrink_EldritchSorcerer_Patch8_v6.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v6.pak
+          cat versions/v6/Manaweaver_v6_source.tar.xz.part-* > dist/Manaweaver_v6_source.tar.xz
+
+          xz -dc .release-assets/v7/Shrink_EldritchSorcerer_Patch8_v7.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v7.pak
+          cat versions/v7/Manaweaver_v7_source.tar.xz.part-* > dist/Manaweaver_v7_source.tar.xz
+
+          xz -dc .release-assets/v8/Shrink_EldritchSorcerer_Patch8_v8.pak.xz > dist/Shrink_EldritchSorcerer_Patch8_v8.pak
+          cat versions/v8/Manaweaver_v8_source.tar.xz.part-* > dist/Manaweaver_v8_source.tar.xz
+
+          test -s dist/Shrink_EldritchBlast6_Patch8.pak
+          test -s dist/Shrink_EldritchBlast6_Patch8_Source.zip
+          test -s dist/Shrink_EldritchBlast6_Patch8_v2.pak
+          test -s dist/Shrink_EldritchBlast6_Patch8_v2_Source.zip
+          test -s dist/Shrink_EldritchBlastProgressive_Patch8_v3.pak
+          test -s dist/Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip
+          test -s dist/Shrink_EldritchBlastSpecialization_Patch8_v4.pak
+          test -s dist/Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip
+          test -s dist/Shrink_EldritchSorcerer_Patch8_v5.pak
+          test -s dist/Shrink_EldritchSorcerer_Patch8_v5_Source.zip
+          test -s dist/Shrink_EldritchSorcerer_Patch8_v6.pak
+          test -s dist/Manaweaver_v6_source.tar.xz
+          test -s dist/Shrink_EldritchSorcerer_Patch8_v7.pak
+          test -s dist/Manaweaver_v7_source.tar.xz
+          test -s dist/Shrink_EldritchSorcerer_Patch8_v8.pak
+          test -s dist/Manaweaver_v8_source.tar.xz
+
+          echo 'Prepared assets:'
+          sha256sum dist/* | sort
+
+      - name: Create or update v1-v8 releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          publish_release() {
+            local tag="$1"
+            local target="$2"
+            local title="$3"
+            local pak="$4"
+            local source="$5"
+            local notes=".release-assets/notes/${tag}.md"
+
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release upload "$tag" "dist/$pak" "dist/$source" --clobber
+              gh release edit "$tag" --title "$title" --notes-file "$notes"
+            else
+              gh release create "$tag" "dist/$pak" "dist/$source" \
+                --target "$target" \
+                --title "$title" \
+                --notes-file "$notes"
+            fi
+          }
+
+          publish_release \
+            v1 \
+            06f8c35f14371025d9811b66499ed9b831b41e45 \
+            'v1 — Eldritch Blast Prototype / 魔能爆原型' \
+            Shrink_EldritchBlast6_Patch8.pak \
+            Shrink_EldritchBlast6_Patch8_Source.zip
+
+          publish_release \
+            v2 \
+            0f4726cb80e3fb78094444916bfd0657b13d8121 \
+            'v2 — Runtime Six-Beam Blast / 运行时六束魔爆' \
+            Shrink_EldritchBlast6_Patch8_v2.pak \
+            Shrink_EldritchBlast6_Patch8_v2_Source.zip
+
+          publish_release \
+            v3 \
+            cc6455b24be9510affb6a21b5ecca5b24e798332 \
+            'v3 — Progressive Eldritch Blast / 渐进魔能爆' \
+            Shrink_EldritchBlastProgressive_Patch8_v3.pak \
+            Shrink_EldritchBlastProgressive_Patch8_v3_Source.zip
+
+          publish_release \
+            v4 \
+            d1e60fa3ba475ba79a29a231b5e0d23de45bc83d \
+            'v4 — Eldritch Blast Specialization / 魔爆专精' \
+            Shrink_EldritchBlastSpecialization_Patch8_v4.pak \
+            Shrink_EldritchBlastSpecialization_Patch8_v4_Source.zip
+
+          publish_release \
+            v5 \
+            66ee453de6628500531eb1ab77627822ffb79483 \
+            'v5 — Manaweaver Subclass / 魔能术士子职业' \
+            Shrink_EldritchSorcerer_Patch8_v5.pak \
+            Shrink_EldritchSorcerer_Patch8_v5_Source.zip
+
+          publish_release \
+            v6 \
+            9b4960daac3920e3dee6f3c886f6d863537b658b \
+            'v6 — Manaweaver Progression Rework / 魔能术士成长重构' \
+            Shrink_EldritchSorcerer_Patch8_v6.pak \
+            Manaweaver_v6_source.tar.xz
+
+          publish_release \
+            v7 \
+            2cdafee5d76b5fb44f34f604cdf268a81b4b1191 \
+            'v7 — Custom Spellbook Expansion / 专属法表扩展' \
+            Shrink_EldritchSorcerer_Patch8_v7.pak \
+            Manaweaver_v7_source.tar.xz
+
+          publish_release \
+            v8 \
+            3b0de858a8351aeee3020654e0200471fdd67b01 \
+            'v8 — Manaweaver Patch 8 / 魔能术士 Patch 8' \
+            Shrink_EldritchSorcerer_Patch8_v8.pak \
+            Manaweaver_v8_source.tar.xz
+
+          gh release edit v7 --prerelease
+          gh release edit v8 --latest
+
+          echo 'Published releases:'
+          gh release list --limit 20
